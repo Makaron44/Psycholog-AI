@@ -1,0 +1,655 @@
+'use client';
+
+import React, { useState, useEffect, useRef } from 'react';
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { 
+  Brain, 
+  Send, 
+  RotateCcw, 
+  ChevronRight, 
+  History, 
+  Sparkles, 
+  AlertCircle,
+  Loader2,
+  BarChart3,
+  PieChart as PieChartIcon,
+  Download,
+  FileJson
+} from 'lucide-react';
+import { motion } from 'motion/react';
+import { 
+  PieChart, 
+  Pie, 
+  Cell, 
+  ResponsiveContainer, 
+  Tooltip, 
+  Legend, 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis,
+  CartesianGrid
+} from 'recharts';
+
+// --- Types ---
+interface SummarySection {
+  tytul: string;
+  tresc: string;
+}
+
+interface SimulationTurn {
+  opis_sytuacji: string;
+  reakcja_1: string;
+  reakcja_2: string;
+  reakcja_3: string;
+  styl_1: string;
+  styl_2: string;
+  styl_3: string;
+  komentarz_eksperta?: string;
+}
+
+interface ChatMessage {
+  role: 'user' | 'model';
+  parts: { text: string }[];
+}
+
+type AppState = 'setup' | 'simulation' | 'summary';
+
+// --- Constants ---
+const CHECK_INTERVAL = 5;
+const MAX_HISTORY_LENGTH = 10;
+
+export default function BehaviorSimulator() {
+  // --- State ---
+  const [appState, setAppState] = useState<AppState>('setup');
+  const [isMounted, setIsMounted] = useState(false);
+  const [situationInput, setSituationInput] = useState('');
+  const [profession, setProfession] = useState('');
+  const [context, setContext] = useState('');
+  const [turnCount, setTurnCount] = useState(0);
+  const [currentTurn, setCurrentTurn] = useState<SimulationTurn | null>(null);
+  const [summary, setSummary] = useState<SummarySection[] | null>(null);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [chosenStyles, setChosenStyles] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [showLimitModal, setShowLimitModal] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(0);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setIsMounted(true);
+    const hasSeenOnboarding = localStorage.getItem('onboarding_seen');
+    if (!hasSeenOnboarding) {
+      setShowOnboarding(true);
+    }
+  }, []);
+
+  // --- AI Setup ---
+  const genAI = React.useMemo(() => {
+    return new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY || "" });
+  }, []);
+
+  // --- Helpers ---
+  const showError = (msg: string) => {
+    setError(msg);
+    setTimeout(() => setError(null), 5000);
+  };
+
+  const processTurn = async (userPrompt: string, isSummaryRequest: boolean = false) => {
+    setIsLoading(true);
+    setLoadingText(isSummaryRequest ? "Generowanie profilu psychologicznego..." : "Analiza sytuacji i zachowań...");
+
+    const newHistory: ChatMessage[] = [
+      ...chatHistory,
+      { role: "user", parts: [{ text: userPrompt }] }
+    ];
+    setChatHistory(newHistory);
+
+    try {
+      const model = "gemini-3-flash-preview";
+      
+      let systemInstruction = `Jesteś światowej klasy ekspertem w dziedzinie psychologii behawioralnej i klinicznej. 
+      Twoim zadaniem jest prowadzenie realistycznej, wielowarstwowej symulacji sytuacji kryzysowej lub społecznej. 
+      
+      Każdy krok musi być logiczną kontynuacją poprzednich wyborów, uwzględniając zawód użytkownika (${profession || "nieokreślony"}) i wybrany kontekst (${context || "ogólny"}). 
+      Twórz opisy sytuacji, które są bogate w detale psychologiczne (np. mowa ciała innych osób, Twoje wewnętrzne odczucia, presja czasu). 
+      
+      Jeśli to nie jest pierwsza tura (turnCount > 0), dodaj krótki, błyskotliwy komentarz ekspercki (komentarz_eksperta) dotyczący ostatniego wyboru użytkownika, wyjaśniający jego psychologiczne podłoże lub potencjalne konsekwencje.
+
+      Reakcje, które proponujesz, powinny reprezentować różne style radzenia sobie: 
+      - Reakcja 1: Skupiona na zadaniu / logiczna.
+      - Reakcja 2: Skupiona na relacjach / emocjonalna.
+      - Reakcja 3: Skupiona na unikaniu / bezpieczeństwie lub nieszablonowa.
+      
+      Zwracasz wyłącznie JSON.`;
+      let responseSchema: any = {
+        type: Type.OBJECT,
+        properties: {
+          opis_sytuacji: { type: Type.STRING },
+          reakcja_1: { type: Type.STRING },
+          reakcja_2: { type: Type.STRING },
+          reakcja_3: { type: Type.STRING },
+          styl_1: { type: Type.STRING, description: "Krótka nazwa stylu reakcji 1 (np. Zadaniowy)" },
+          styl_2: { type: Type.STRING, description: "Krótka nazwa stylu reakcji 2 (np. Relacyjny)" },
+          styl_3: { type: Type.STRING, description: "Krótka nazwa stylu reakcji 3 (np. Unikający)" },
+          komentarz_eksperta: { type: Type.STRING, description: "Krótki komentarz psychologa do poprzedniego wyboru (opcjonalnie)" }
+        },
+        required: ["opis_sytuacji", "reakcja_1", "reakcja_2", "reakcja_3", "styl_1", "styl_2", "styl_3"]
+      };
+
+      if (isSummaryRequest) {
+        systemInstruction = `Jesteś światowej klasy profesorem psychologii klinicznej i ekspertem analizy behawioralnej. 
+        Twoim zadaniem jest stworzenie pogłębionego, wielowymiarowego profilu psychologicznego użytkownika na podstawie jego decyzji w symulacji. 
+        
+        Analiza musi być zróżnicowana i zawierać następujące sekcje:
+        1. ARCHETYP REAKCJI: Zidentyfikuj dominujący wzorzec (np. 'Opanowany Strateg', 'Empatyczny Mediator', 'Impulsywny Obrońca').
+        2. STYL DECYZYJNY: Przeanalizuj, czy wybory są oparte na logice, emocjach, czy unikaniu ryzyka.
+        3. WPŁYW ZAWODU: Jak profesja (${profession || "nieokreślona"}) wpłynęła na podejście do problemu (${context || "ogólnego"}).
+        4. INTELIGENCJA EMOCJONALNA: Ocena zdolności do zarządzania emocjami własnymi i innych w trudnych sytuacjach.
+        5. KOMENTARZ EKSPERCKI: Podsumowujący, głęboki wgląd od psychologa na temat ogólnej postawy użytkownika.
+        6. POTENCJAŁ I RYZYKA: Wskaż mocne strony oraz 'martwe punkty' (blind spots), które mogą utrudniać funkcjonowanie w rzeczywistości.
+        
+        Używaj profesjonalnego, eseistycznego stylu. Odwołuj się do konkretnych wyborów dokonanych przez użytkownika. 
+        Zwróć JSON z kluczem 'sekcje', który jest tablicą obiektów z kluczami 'tytul' i 'tresc'.`;
+        responseSchema = {
+          type: Type.OBJECT,
+          properties: {
+            sekcje: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  tytul: { type: Type.STRING },
+                  tresc: { type: Type.STRING }
+                },
+                required: ["tytul", "tresc"]
+              }
+            }
+          },
+          required: ["sekcje"]
+        };
+      }
+
+      const response = await genAI.models.generateContent({
+        model,
+        contents: newHistory.slice(-MAX_HISTORY_LENGTH),
+        config: {
+          systemInstruction,
+          responseMimeType: "application/json",
+          responseSchema
+        }
+      });
+
+      const text = response.text;
+      if (!text) throw new Error("Brak odpowiedzi od AI");
+
+      const jsonResponse = JSON.parse(text);
+
+      setChatHistory(prev => [...prev, { role: "model", parts: [{ text }] }]);
+
+      if (isSummaryRequest) {
+        setSummary(jsonResponse.sekcje);
+        setAppState('summary');
+      } else {
+        setCurrentTurn(jsonResponse);
+        setAppState('simulation');
+        
+        // Check for limit modal
+        if (turnCount > 0 && turnCount % CHECK_INTERVAL === 0) {
+          setShowLimitModal(true);
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      showError(`Wystąpił błąd: ${err.message}`);
+      setChatHistory(newHistory.slice(0, -1)); // Rollback history
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // --- Handlers ---
+  const handleStart = async () => {
+    if (!situationInput.trim()) {
+      showError("Proszę opisać początkową sytuację.");
+      return;
+    }
+    setTurnCount(1);
+    const initialPrompt = `
+      Zawód użytkownika: ${profession || "Nieokreślony"}
+      Kontekst/Temat: ${context || "Ogólny"}
+      Początkowa sytuacja: ${situationInput}
+    `;
+    await processTurn(initialPrompt);
+  };
+
+  const handleReaction = async (reactionText: string, style: string) => {
+    setTurnCount(prev => prev + 1);
+    setChosenStyles(prev => [...prev, style]);
+    await processTurn(`Moja reakcja: ${reactionText} (Styl: ${style}). Jak rozwija się sytuacja i jakie są moje kolejne możliwe reakcje?`);
+  };
+
+  const handleSummaryRequest = async () => {
+    setShowLimitModal(false);
+    await processTurn("Zakończ symulację i stwórz eksperckie podsumowanie mojego profilu behawioralnego.", true);
+  };
+
+  const downloadJson = () => {
+    if (!summary) return;
+    const data = {
+      user_info: {
+        profession,
+        context,
+        turns: turnCount
+      },
+      reaction_styles: chosenStyles,
+      psychological_profile: summary
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `profil_psychologiczny_${new Date().getTime()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const resetApp = () => {
+    setAppState('setup');
+    setSituationInput('');
+    setProfession('');
+    setContext('');
+    setTurnCount(0);
+    setCurrentTurn(null);
+    setSummary(null);
+    setChatHistory([]);
+    setChosenStyles([]);
+    setShowLimitModal(false);
+  };
+
+  const finishOnboarding = () => {
+    setShowOnboarding(false);
+    localStorage.setItem('onboarding_seen', 'true');
+  };
+
+  const onboardingSteps = [
+    {
+      title: "Witaj w Symulatorze AI!",
+      description: "To narzędzie pozwoli Ci przetestować Twoje reakcje w realistycznych scenariuszach psychologicznych. Dowiesz się, jak Twoje decyzje wpływają na rozwój sytuacji.",
+      icon: <Sparkles className="w-8 h-8 text-blue-500" />
+    },
+    {
+      title: "Krok 1: Konfiguracja",
+      description: "Zacznij od podania swojego zawodu i kontekstu sytuacji. Pomoże to AI dostosować scenariusz do Twoich realiów.",
+      icon: <Brain className="w-8 h-8 text-blue-500" />
+    },
+    {
+      title: "Krok 2: Symulacja",
+      description: "W każdej turze otrzymasz opis sytuacji i 3 możliwe reakcje. Każda reprezentuje inny styl: zadaniowy, relacyjny lub unikający.",
+      icon: <History className="w-8 h-8 text-blue-500" />
+    },
+    {
+      title: "Krok 3: Twój Profil",
+      description: "Po kilku turach otrzymasz pełny profil psychologiczny, który możesz pobrać jako plik JSON do późniejszej analizy.",
+      icon: <FileJson className="w-8 h-8 text-blue-500" />
+    }
+  ];
+
+  const renderOnboarding = () => (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-white rounded-[2.5rem] p-8 md:p-12 max-w-lg w-full shadow-2xl space-y-8 relative overflow-hidden"
+      >
+        <div className="absolute top-0 left-0 w-full h-2 bg-slate-100">
+          <motion.div 
+            className="h-full bg-blue-600"
+            initial={{ width: 0 }}
+            animate={{ width: `${((onboardingStep + 1) / onboardingSteps.length) * 100}%` }}
+          />
+        </div>
+
+        <div className="flex flex-col items-center text-center space-y-4">
+          <div className="p-4 bg-blue-50 rounded-3xl mb-2">
+            {onboardingSteps[onboardingStep].icon}
+          </div>
+          <h2 className="text-2xl font-black text-slate-900">{onboardingSteps[onboardingStep].title}</h2>
+          <p className="text-slate-600 leading-relaxed">
+            {onboardingSteps[onboardingStep].description}
+          </p>
+        </div>
+
+        <div className="flex gap-3">
+          {onboardingStep > 0 && (
+            <button 
+              onClick={() => setOnboardingStep(prev => prev - 1)}
+              className="flex-1 py-4 px-6 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all"
+            >
+              Wstecz
+            </button>
+          )}
+          <button 
+            onClick={() => {
+              if (onboardingStep < onboardingSteps.length - 1) {
+                setOnboardingStep(prev => prev + 1);
+              } else {
+                finishOnboarding();
+              }
+            }}
+            className="flex-[2] py-4 px-6 rounded-2xl font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-95"
+          >
+            {onboardingStep === onboardingSteps.length - 1 ? "Zaczynamy!" : "Dalej"}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+
+  // --- Render Helpers ---
+  const renderSetup = () => (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="space-y-6 p-6 md:p-8"
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <label className="text-sm font-semibold text-slate-700">Twój zawód</label>
+          <input 
+            type="text"
+            value={profession}
+            onChange={(e) => setProfession(e.target.value)}
+            placeholder="Np. Kierowca, Nauczyciel..."
+            className="w-full p-3 rounded-xl border border-slate-200 focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all bg-slate-50/50 text-base"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-semibold text-slate-700">Czego dotyczy sprawa?</label>
+          <input 
+            type="text"
+            value={context}
+            onChange={(e) => setContext(e.target.value)}
+            placeholder="Np. Relacje rodzinne, Praca..."
+            className="w-full p-3 rounded-xl border border-slate-200 focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all bg-slate-50/50 text-base"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-blue-500" />
+          Opisz początkową sytuację
+        </label>
+        <textarea 
+          value={situationInput}
+          onChange={(e) => setSituationInput(e.target.value)}
+          placeholder="Np. Jesteś na ważnym spotkaniu i nagle zdajesz sobie sprawę, że Twoja prezentacja zniknęła z pendrive'a..."
+          className="w-full min-h-[120px] p-4 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all resize-none bg-slate-50/50 text-base"
+        />
+      </div>
+      <button 
+        onClick={handleStart}
+        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-2xl shadow-lg shadow-blue-200 transition-all active:scale-95 flex items-center justify-center gap-3 group"
+      >
+        <span>Rozpocznij Symulację</span>
+        <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+      </button>
+    </motion.div>
+  );
+
+  const renderSimulation = () => (
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 1.05 }}
+      className="p-6 md:p-8 flex flex-col min-h-[500px]"
+    >
+      <div className="flex justify-between items-center mb-6">
+        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+          <History className="w-4 h-4" />
+          Tura: {turnCount}
+        </div>
+        <button onClick={resetApp} className="text-slate-400 hover:text-slate-600 transition-colors">
+          <RotateCcw className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="flex-grow space-y-8">
+        {currentTurn?.komentarz_eksperta && (
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-2xl flex gap-3 items-start"
+          >
+            <Brain className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1">Wgląd Eksperta</span>
+              <p className="text-sm text-amber-900 italic leading-relaxed">
+                &quot;{currentTurn.komentarz_eksperta}&quot;
+              </p>
+            </div>
+          </motion.div>
+        )}
+
+        <div className="bg-blue-50/50 border border-blue-100 p-6 rounded-3xl text-slate-800 leading-relaxed text-lg italic">
+          {currentTurn?.opis_sytuacji}
+        </div>
+
+        <div className="space-y-3">
+          {[
+            { text: currentTurn?.reakcja_1, style: currentTurn?.styl_1 },
+            { text: currentTurn?.reakcja_2, style: currentTurn?.styl_2 },
+            { text: currentTurn?.reakcja_3, style: currentTurn?.styl_3 }
+          ].map((reaction, idx) => (
+            <button
+              key={idx}
+              onClick={() => reaction.text && reaction.style && handleReaction(reaction.text, reaction.style)}
+              className="w-full text-left p-5 rounded-2xl border border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50/30 transition-all group flex items-start gap-4"
+            >
+              <span className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                {idx + 1}
+              </span>
+              <div className="flex-grow">
+                <span className="block text-slate-700 font-medium">{reaction.text}</span>
+                <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1 block group-hover:text-blue-400 transition-colors">
+                  {reaction.style}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-10 pt-6 border-t border-slate-100 flex justify-between items-center">
+        <button 
+          onClick={handleSummaryRequest}
+          className="text-blue-600 hover:text-blue-800 font-bold text-sm flex items-center gap-2"
+        >
+          <Brain className="w-4 h-4" />
+          Zakończ i podsumuj profil
+        </button>
+      </div>
+    </motion.div>
+  );
+
+  const renderSummary = () => {
+    const styleCounts = chosenStyles.reduce((acc, style) => {
+      acc[style] = (acc[style] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const chartData = Object.entries(styleCounts).map(([name, value]) => ({ name, value }));
+    const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+
+    return (
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="p-6 md:p-8 space-y-8"
+      >
+        <div className="text-center space-y-2">
+          <div className="inline-flex p-3 bg-green-100 rounded-full text-green-600 mb-2">
+            <Brain className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-black text-slate-900">Twój Profil Behawioralny</h2>
+          <p className="text-slate-500 text-sm">Analiza na podstawie {turnCount} podjętych decyzji</p>
+        </div>
+
+        {/* Chart Section */}
+        <div className="bg-slate-50 rounded-[2rem] p-6 border border-slate-100 mb-8">
+          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+            <BarChart3 className="w-4 h-4" />
+            Dominujące Style Reakcji
+          </h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={chartData}
+                  cx="50%"
+                  cy="45%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                />
+                <Legend 
+                  verticalAlign="bottom" 
+                  align="center"
+                  wrapperStyle={{ paddingTop: '20px' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="space-y-6 pt-4">
+          {summary?.map((section, idx) => (
+            <div 
+              key={idx} 
+              className="bg-white border border-slate-100 p-6 rounded-[1.5rem] shadow-sm hover:shadow-md transition-shadow"
+            >
+              <h4 className="text-blue-600 font-black text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                {section.tytul}
+              </h4>
+              <p className="text-slate-700 leading-relaxed text-sm md:text-base">
+                {section.tresc}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button 
+            onClick={downloadJson}
+            className="flex-grow bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold py-4 px-8 rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2"
+          >
+            <FileJson className="w-5 h-5" />
+            Pobierz Profil JSON
+          </button>
+          <button 
+            onClick={resetApp}
+            className="flex-grow bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 px-8 rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2"
+          >
+            <RotateCcw className="w-5 h-5" />
+            Nowa Historia
+          </button>
+        </div>
+      </motion.div>
+    );
+  };
+
+  if (!isMounted) {
+    return <div className="min-h-screen bg-slate-50" />;
+  }
+
+  return (
+    <main className="min-h-screen flex items-center justify-center p-4 sm:p-8">
+      <div className="max-w-2xl w-full bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200/50 overflow-hidden border border-slate-100 relative">
+        
+        {/* Header */}
+        <div className="bg-blue-600 p-8 text-white text-center relative overflow-hidden">
+          <h1 className="text-3xl font-black tracking-tight mb-2">Symulator Zachowań</h1>
+          <p className="text-blue-100 text-sm font-medium opacity-80">
+            Eksploruj psychologiczne scenariusze i konsekwencje swoich decyzji.
+          </p>
+        </div>
+
+        {/* Content */}
+        <div className="relative">
+          <div className="relative z-10">
+            {appState === 'setup' && renderSetup()}
+            {appState === 'simulation' && renderSimulation()}
+            {appState === 'summary' && renderSummary()}
+          </div>
+
+          {/* Onboarding */}
+          {showOnboarding && renderOnboarding()}
+
+          {/* Loading Overlay */}
+          {isLoading && (
+            <div className="absolute inset-0 bg-white/80 backdrop-blur-md z-50 flex flex-col items-center justify-center p-8 text-center">
+              <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
+              <p className="text-blue-600 font-bold animate-pulse">{loadingText}</p>
+            </div>
+          )}
+
+          {/* Error Message */}
+          {error && (
+            <div className="absolute top-4 left-4 right-4 bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center gap-3 text-red-600 text-sm font-medium z-[60] shadow-lg">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          {/* Limit Modal */}
+          {showLimitModal && (
+            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-6">
+              <div className="bg-white rounded-[2rem] p-8 shadow-2xl max-w-sm w-full text-center space-y-6">
+                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto">
+                  <History className="w-8 h-8" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xl font-black text-slate-900">Przerwa na refleksję!</h3>
+                  <p className="text-slate-500 text-sm leading-relaxed">
+                    Rozegrałeś już <span className="font-bold text-slate-900">{turnCount}</span> tur. Analiza Twoich zachowań nabiera kształtu. Chcesz kontynuować czy zobaczyć podsumowanie?
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button 
+                    onClick={() => setShowLimitModal(false)}
+                    className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 px-6 rounded-xl transition-colors"
+                  >
+                    Kontynuuj zabawę
+                  </button>
+                  <button 
+                    onClick={handleSummaryRequest}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-blue-100 transition-all"
+                  >
+                    Zakończ i podsumuj
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </main>
+  );
+}

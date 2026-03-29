@@ -1,0 +1,5 @@
+{
+  "name": "Symulator Zachowań AI",
+  "description": "Eksploruj psychologiczne scenariusze i analizuj swoje reakcje z pomocą zaawansowanej sztucznej inteligencji.",
+  "requestFramePermissions": []
+}

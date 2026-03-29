@@ -1,0 +1,22 @@
+{
+  "name": "Symulator Zachowań AI",
+  "short_name": "Symulator AI",
+  "description": "Eksploruj psychologiczne scenariusze i analizuj swoje reakcje.",
+  "start_url": "/Psycholog-AI/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/Psycholog-AI/icon-192.png",
+      "sizes": "192x192 1024x1024",
+      "type": "image/png"
+    },
+    {
+      "src": "/Psycholog-AI/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

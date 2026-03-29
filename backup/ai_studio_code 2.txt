@@ -1,0 +1,25 @@
+import type {Metadata} from 'next';
+import './globals.css';
+
+export const metadata: Metadata = {
+  title: 'Symulator Zachowań AI',
+  description: 'Eksploruj psychologiczne scenariusze i analizuj swoje reakcje.',
+};
+
+export default function RootLayout({children}: {children: React.ReactNode}) {
+  return (
+    <html lang="pl">
+      <head>
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#2563eb" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="Symulator AI" />
+        <link rel="apple-touch-icon" href="https://picsum.photos/seed/ai-simulator/192/192" />
+      </head>
+      <body className="bg-slate-50 text-slate-900 antialiased" suppressHydrationWarning>
+        {children}
+      </body>
+    </html>
+  );
+}
