@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
-    <html lang="pl" suppressHydrationWarning>
+    <html lang="pl" suppressHydrationWarning className="bg-slate-50 dark:bg-slate-950">
       <head>
         <link rel="manifest" href="/Psycholog-AI/manifest.json" />
         <meta name="theme-color" content="#2563eb" />
