@@ -735,9 +735,11 @@ export default function BehaviorSimulator() {
 
           {/* Error Message */}
           {error && (
-            <div className="absolute top-4 left-4 right-4 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 p-4 rounded-2xl flex items-center gap-3 text-red-600 dark:text-red-400 text-sm font-medium z-[60] shadow-lg">
-              <AlertCircle className="w-5 h-5 shrink-0" />
-              {error}
+            <div className="fixed top-6 left-1/2 -translate-x-1/2 bg-white dark:bg-slate-800 border-2 border-red-500 dark:border-red-500 p-4 rounded-2xl flex items-center gap-4 text-slate-800 dark:text-slate-100 text-sm font-bold z-[200] shadow-2xl shadow-red-500/20 max-w-md w-[90%] animate-in fade-in slide-in-from-top-8 duration-300">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/50 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
+              </div>
+              <span className="leading-relaxed">{error}</span>
             </div>
           )}
 
