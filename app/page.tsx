@@ -20,14 +20,6 @@ import {
   FileDown
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { 
-  PieChart, 
-  Pie, 
-  Cell, 
-  ResponsiveContainer, 
-  Tooltip, 
-  Legend,
-} from 'recharts';
 import { useTheme } from 'next-themes';
 
 // --- Types ---
@@ -589,8 +581,18 @@ export default function BehaviorSimulator() {
       return acc;
     }, {} as Record<string, number>);
 
-    const chartData = Object.entries(styleCounts).map(([name, value]) => ({ name, value }));
-    const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+    const totalDecisions = chosenStyles.length > 0 ? chosenStyles.length : turnCount;
+
+    const chartData = Object.entries(styleCounts)
+      .map(([name, value]) => ({ 
+        name, 
+        value,
+        percentage: Math.round((value / totalDecisions) * 100)
+      }))
+      .sort((a, b) => b.value - a.value);
+
+    // Paleta wyrazistych soczystych gradientowych-like kolorów bazujących na stylach tailwind
+    const COLORS = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500', 'bg-rose-500', 'bg-cyan-500'];
 
     return (
       <motion.div 
@@ -613,32 +615,33 @@ export default function BehaviorSimulator() {
               <BarChart3 className="w-4 h-4" />
               Dominujące Style Reakcji
             </h3>
-            <div className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={chartData}
-                    cx="50%"
-                    cy="45%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '16px', border: 'none', backgroundColor: theme === 'dark' ? '#0f172a' : '#fff', color: theme === 'dark' ? '#f1f5f9' : '#000', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  />
-                  <Legend 
-                    verticalAlign="bottom" 
-                    align="center"
-                    wrapperStyle={{ paddingTop: '20px' }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+            
+            <div className="space-y-6">
+              {chartData.map((item, index) => (
+                <div key={index} className="space-y-2">
+                  <div className="flex justify-between items-end gap-4">
+                    <span className="text-sm md:text-base font-bold text-slate-700 dark:text-slate-200 leading-snug">
+                      {item.name}
+                    </span>
+                    <span className="text-xs font-black text-slate-500 dark:text-slate-400 shrink-0">
+                      {item.percentage}%
+                    </span>
+                  </div>
+                  
+                  <div className="h-3 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                    <motion.div 
+                      className={`h-full rounded-full ${COLORS[index % COLORS.length]}`}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${item.percentage}%` }}
+                      transition={{ duration: 1, ease: "easeOut", delay: index * 0.15 }}
+                    />
+                  </div>
+                  
+                  <div className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 text-right">
+                    Wybory: {item.value} / {totalDecisions}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
