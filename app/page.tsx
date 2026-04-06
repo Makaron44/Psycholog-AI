@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
+import OpenAI from "openai";
 import { 
   Brain, 
   RotateCcw, 
@@ -77,6 +78,8 @@ export default function BehaviorSimulator() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [apiKey, setApiKey] = useState('');
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [selectedModel, setSelectedModel] = useState('gemini');
   const [showSettings, setShowSettings] = useState(false);
   
   const { theme, setTheme } = useTheme();
@@ -92,6 +95,14 @@ export default function BehaviorSimulator() {
     if (savedApiKey) {
       setApiKey(savedApiKey);
     }
+    const savedOpenAiKey = localStorage.getItem('openai_api_key');
+    if (savedOpenAiKey) {
+      setOpenaiApiKey(savedOpenAiKey);
+    }
+    const savedModel = localStorage.getItem('selected_model');
+    if (savedModel) {
+      setSelectedModel(savedModel);
+    }
   }, []);
 
   // --- Helpers ---
@@ -101,11 +112,17 @@ export default function BehaviorSimulator() {
   };
 
   const processTurn = async (userPrompt: string, isSummaryRequest: boolean = false) => {
-    if (!apiKey) {
-      showError("Brak klucza API. Kliknij ikonę u góry po prawej (Ustawienia), aby go dodać.");
+    if (selectedModel === 'gemini' && !apiKey) {
+      showError("Brak klucza API dla Gemini. Kliknij ikonę u góry po prawej (Ustawienia), aby go dodać.");
       setShowSettings(true);
       return;
     }
+    if (selectedModel !== 'gemini' && !openaiApiKey) {
+      showError("Brak klucza API dla OpenAI. Kliknij ikonę Ustawień.");
+      setShowSettings(true);
+      return;
+    }
+
     setIsLoading(true);
     setLoadingText(isSummaryRequest ? "Generowanie profilu psychologicznego..." : "Analiza sytuacji i zachowań...");
 
@@ -116,9 +133,6 @@ export default function BehaviorSimulator() {
     setChatHistory(newHistory);
 
     try {
-      const genAI = new GoogleGenAI({ apiKey });
-      const model = "gemini-2.5-flash-lite";
-      
       let systemInstruction = `Jesteś światowej klasy ekspertem w dziedzinie psychologii behawioralnej i klinicznej. 
       Twoim zadaniem jest prowadzenie realistycznej, wielowarstwowej symulacji sytuacji kryzysowej lub społecznej. 
       Zwracaj się do użytkownika bezpośrednio po imieniu: ${name || "użytkowniku"}.
@@ -126,7 +140,7 @@ export default function BehaviorSimulator() {
       Każdy krok musi być logiczną kontynuacją poprzednich wyborów, uwzględniając zawód użytkownika (${profession || "nieokreślony"}) i wybrany kontekst (${context || "ogólny"}). 
       Twórz opisy sytuacji, które są bogate w detale psychologiczne (np. mowa ciała innych osób, Twoje wewnętrzne odczucia, presja czasu). 
       
-      Jeśli to nie jest pierwsza tura (turnCount > 0), dodaj krótki, błyskotliwy komentarz ekspercki (komentarz_eksperta) dotyczący ostatniego wyboru użytkownika, wyjaśniający jego psychologiczne podłoże lub potencjalne konsekwencje.
+      Jeśli to nie jest pierwsza tura (turnCount > 0), dodaj krótki, błyskotliwy komentarz ekspercki (komentarz_eksperta) dotyczący ostatniego wyboru użytkownika, wyjaśniający jego psychologiczne podłoże lub potencjalne konsekwencje. Długość dla komentarza max 1-2 zdania.
 
       Reakcje, które proponujesz, powinny reprezentować różne style radzenia sobie: 
       - Reakcja 1: Skupiona na zadaniu / logiczna.
@@ -134,69 +148,136 @@ export default function BehaviorSimulator() {
       - Reakcja 3: Skupiona na unikaniu / bezpieczeństwie lub nieszablonowa.
       
       Zwracasz wyłącznie JSON.`;
-      
-      let responseSchema: any = {
-        type: Type.OBJECT,
-        properties: {
-          opis_sytuacji: { type: Type.STRING },
-          reakcja_1: { type: Type.STRING },
-          reakcja_2: { type: Type.STRING },
-          reakcja_3: { type: Type.STRING },
-          styl_1: { type: Type.STRING, description: "Krótka nazwa stylu reakcji 1 (np. Zadaniowy)" },
-          styl_2: { type: Type.STRING, description: "Krótka nazwa stylu reakcji 2 (np. Relacyjny)" },
-          styl_3: { type: Type.STRING, description: "Krótka nazwa stylu reakcji 3 (np. Unikający)" },
-          komentarz_eksperta: { type: Type.STRING, description: "Krótki komentarz psychologa do poprzedniego wyboru (opcjonalnie)" }
-        },
-        required: ["opis_sytuacji", "reakcja_1", "reakcja_2", "reakcja_3", "styl_1", "styl_2", "styl_3"]
-      };
 
       if (isSummaryRequest) {
         systemInstruction = `Jesteś światowej klasy profesorem psychologii klinicznej i ekspertem analizy behawioralnej. 
         Twoim zadaniem jest stworzenie pogłębionego, wielowymiarowego profilu psychologicznego użytkownika na podstawie jego decyzji w symulacji. 
         
         Analiza musi być zróżnicowana i zawierać następujące sekcje:
-        1. ARCHETYP REAKCJI: Zidentyfikuj dominujący wzorzec (np. 'Opanowany Strateg', 'Empatyczny Mediator', 'Impulsywny Obrońca').
+        1. ARCHETYP REAKCJI: Zidentyfikuj dominujący wzorzec.
         2. STYL DECYZYJNY: Przeanalizuj, czy wybory są oparte na logice, emocjach, czy unikaniu ryzyka.
         3. WPŁYW ZAWODU: Jak profesja (${profession || "nieokreślona"}) wpłynęła na podejście do problemu (${context || "ogólnego"}).
-        4. INTELIGENCJA EMOCJONALNA: Ocena zdolności do zarządzania emocjami własnymi i innych w trudnych sytuacjach.
-        5. KOMENTARZ EKSPERCKI: Podsumowujący, głęboki wgląd od psychologa na temat ogólnej postawy użytkownika.
-        6. POTENCJAŁ I RYZYKA: Wskaż mocne strony oraz 'martwe punkty' (blind spots), które mogą utrudniać funkcjonowanie w rzeczywistości.
+        4. INTELIGENCJA EMOCJONALNA: Ocena zdolności.
+        5. KOMENTARZ EKSPERCKI: Podsumowujący, głęboki wgląd od psychologa.
+        6. POTENCJAŁ I RYZYKA: Wskaż mocne strony oraz 'martwe punkty'.
         
         Używaj profesjonalnego, eseistycznego stylu. Odwołuj się do konkretnych wyborów dokonanych przez użytkownika. 
         Zwróć JSON z kluczem 'sekcje', który jest tablicą obiektów z kluczami 'tytul' i 'tresc'.`;
-        
-        responseSchema = {
-          type: Type.OBJECT,
-          properties: {
-            sekcje: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  tytul: { type: Type.STRING },
-                  tresc: { type: Type.STRING }
-                },
-                required: ["tytul", "tresc"]
-              }
-            }
-          },
-          required: ["sekcje"]
-        };
       }
 
-      const response = await genAI.models.generateContent({
-        model,
-        contents: newHistory.slice(-MAX_HISTORY_LENGTH),
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema
+      let text = "";
+
+      if (selectedModel.startsWith('gpt')) {
+        const openai = new OpenAI({ apiKey: openaiApiKey, dangerouslyAllowBrowser: true });
+        
+        const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+        messages.push({ role: "system", content: systemInstruction });
+        for (const msg of newHistory) {
+          messages.push({ 
+            role: msg.role === 'model' ? "assistant" : "user", 
+            content: msg.parts[0].text 
+          });
         }
-      });
 
-      const text = response.text;
-      if (!text) throw new Error("Brak odpowiedzi od AI");
+        const responseSchemaOpenAI = isSummaryRequest ? {
+          name: "summary_response",
+          schema: {
+            type: "object",
+            properties: {
+              sekcje: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: { tytul: { type: "string" }, tresc: { type: "string" } },
+                  required: ["tytul", "tresc"],
+                  additionalProperties: false
+                }
+              }
+            },
+            required: ["sekcje"],
+            additionalProperties: false
+          },
+          strict: true
+        } : {
+          name: "simulation_turn",
+          schema: {
+            type: "object",
+            properties: {
+              opis_sytuacji: { type: "string" },
+              reakcja_1: { type: "string" },
+              reakcja_2: { type: "string" },
+              reakcja_3: { type: "string" },
+              styl_1: { type: "string" },
+              styl_2: { type: "string" },
+              styl_3: { type: "string" },
+              komentarz_eksperta: { type: "string" }
+            },
+            required: ["opis_sytuacji", "reakcja_1", "reakcja_2", "reakcja_3", "styl_1", "styl_2", "styl_3", "komentarz_eksperta"],
+            additionalProperties: false
+          },
+          strict: true
+        };
 
+        const response = await openai.chat.completions.create({
+          model: selectedModel,
+          messages: messages,
+          // @ts-ignore dynamic json_schema binding
+          response_format: { type: "json_schema", json_schema: responseSchemaOpenAI }
+        });
+
+        text = response.choices[0]?.message?.content || "";
+
+      } else {
+        const genAI = new GoogleGenAI({ apiKey });
+        const model = "gemini-2.5-flash-lite";
+
+        let responseSchemaGemini: any = isSummaryRequest 
+          ? {
+            type: Type.OBJECT,
+            properties: {
+              sekcje: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    tytul: { type: Type.STRING },
+                    tresc: { type: Type.STRING }
+                  },
+                  required: ["tytul", "tresc"]
+                }
+              }
+            },
+            required: ["sekcje"]
+          } 
+          : {
+            type: Type.OBJECT,
+            properties: {
+              opis_sytuacji: { type: Type.STRING },
+              reakcja_1: { type: Type.STRING },
+              reakcja_2: { type: Type.STRING },
+              reakcja_3: { type: Type.STRING },
+              styl_1: { type: Type.STRING },
+              styl_2: { type: Type.STRING },
+              styl_3: { type: Type.STRING },
+              komentarz_eksperta: { type: Type.STRING }
+            },
+            required: ["opis_sytuacji", "reakcja_1", "reakcja_2", "reakcja_3", "styl_1", "styl_2", "styl_3"]
+          };
+
+        const response = await genAI.models.generateContent({
+          model,
+          contents: newHistory.slice(-MAX_HISTORY_LENGTH),
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: responseSchemaGemini
+          }
+        });
+        text = response.text || "";
+      }
+
+      if (!text) throw new Error("Brak prawidłowej odpowiedzi od wybranego modelu AI.");
+      
       const jsonResponse = JSON.parse(text);
 
       setChatHistory(prev => [...prev, { role: "model", parts: [{ text }] }]);
@@ -214,7 +295,7 @@ export default function BehaviorSimulator() {
       }
     } catch (err: any) {
       console.error(err);
-      showError(`Wystąpił błąd: ${err.message}`);
+      showError(`Wystąpił błąd komunikacji: ${err.message}`);
       setChatHistory(newHistory.slice(0, -1));
     } finally {
       setIsLoading(false);
@@ -707,21 +788,58 @@ export default function BehaviorSimulator() {
                   </div>
                   <h3 className="text-xl font-black">Ustawienia API</h3>
                 </div>
-                <div className="space-y-3">
-                  <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">Klucz API Gemini</label>
-                  <input 
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => {
-                      setApiKey(e.target.value);
-                      localStorage.setItem('gemini_api_key', e.target.value);
-                    }}
-                    placeholder="Wklej swój klucz API..."
-                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-800 focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-500 transition-all bg-slate-50/50 dark:bg-slate-900/50 text-slate-900 dark:text-slate-100 text-[16px]"
-                  />
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                    Klucz jest zapisywany tylko w pamięci Twojej przeglądarki (localStorage) i jest w pełni bezpieczny. Używany jest model <strong>gemini-2.5-flash-lite</strong>.
-                  </p>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">Wybierz Zespół Ekspertów</label>
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => {
+                        setSelectedModel(e.target.value);
+                        localStorage.setItem('selected_model', e.target.value);
+                      }}
+                      className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-800 focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-500 transition-all bg-slate-50/50 dark:bg-slate-900/50 text-slate-900 dark:text-slate-100 font-medium"
+                    >
+                      <option value="gemini">Google Gemini 2.5 (Błyskawiczny)</option>
+                      <option value="gpt-4o-mini">OpenAI GPT-4o Mini (Szybki)</option>
+                      <option value="gpt-4o">OpenAI GPT-4o (Głęboka jakość)</option>
+                    </select>
+                  </div>
+                  
+                  {selectedModel === 'gemini' ? (
+                    <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200 delay-100">
+                      <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-blue-600 dark:text-blue-400">Klucz API - Google Gemini</label>
+                      <input 
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => {
+                          setApiKey(e.target.value);
+                          localStorage.setItem('gemini_api_key', e.target.value);
+                        }}
+                        placeholder="Wklej klucz Gemini..."
+                        className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-800 focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-500 transition-all bg-slate-50/50 dark:bg-slate-900/50 text-slate-900 dark:text-slate-100 text-[16px]"
+                      />
+                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                        Klucz jest zapisywany tylko w pamięci Twojej przeglądarki (localStorage). W tej opcji używany jest model <strong>gemini-2.5-flash-lite</strong>.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200 delay-100">
+                      <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-emerald-600 dark:text-emerald-400">Klucz API - OpenAI (ChatGPT)</label>
+                      <input 
+                        type="password"
+                        value={openaiApiKey}
+                        onChange={(e) => {
+                          setOpenaiApiKey(e.target.value);
+                          localStorage.setItem('openai_api_key', e.target.value);
+                        }}
+                        placeholder="sk-proj-..."
+                        className="w-full p-3 rounded-xl border border-emerald-200 dark:border-emerald-800 focus:ring-4 focus:ring-emerald-100 dark:focus:ring-emerald-900/30 focus:border-emerald-500 transition-all bg-emerald-50/10 dark:bg-emerald-900/10 text-slate-900 dark:text-slate-100 text-[16px]"
+                      />
+                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                        Klucz zapisywany tylko u Ciebie z platformy OpenAI. Zostanie użyta sieć inteligencji typu <strong>{selectedModel}</strong>.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
